@@ -11,6 +11,7 @@ import os
 import zipfile
 import shutil
 import numpy as np
+from torchvision import models
 
 # **黑色背景**
 plt.style.use("dark_background")
@@ -29,31 +30,41 @@ def process_dataset(dataset_zip):
         return "Error: Dataset must contain at least 2 category folders.", None
     return f"Dataset extracted successfully! Found classes: {categories}", categories
 
-# **训练模型**
-def train_model(epochs, batch_size, learning_rate, dataset_zip):
-    # 数据集处理
-    status, categories = process_dataset(dataset_zip)
-    if categories is None:
-        return status, None, None, None, None, None
+# **根据选择的模型加载相应的网络**
+def load_model(selected_model, num_classes):
+    if selected_model == "ResNet50":
+        model = models.resnet50(pretrained=True)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+    elif selected_model == "VGG16":
+        model = models.vgg16(pretrained=True)
+        model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)
+    elif selected_model == "EfficientNetB0":
+        model = models.efficientnet_b0(pretrained=True)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    else:
+        raise ValueError("Unsupported model type")
+    return model
 
-    # 数据预处理
+# **训练模型**
+def train_model(epochs, batch_size, learning_rate, selected_model):
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.ToTensor()
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 对预训练模型进行标准化
     ])
+    
     dataset_path = "dataset"
     train_dataset = datasets.ImageFolder(root=dataset_path, transform=transform)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_classes = len(train_dataset.classes)
     
-    # 确保至少有2个类别
     if num_classes < 2:
-        return "Training failed: At least two categories are required.", None, None, None, None, None
+        return "Training failed: At least two categories are required.", None, None, None, None
 
-    # 模型定义（使用ResNet50）
-    model = torch.hub.load('pytorch/vision', 'resnet50', pretrained=True)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)  # 修改最后一层输出维度
+    # **加载用户选择的模型**
+    model = load_model(selected_model, num_classes)
 
+    # **优化器和损失函数**
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -63,7 +74,6 @@ def train_model(epochs, batch_size, learning_rate, dataset_zip):
     all_labels = []
     training_log = ""
 
-    # 训练过程
     for epoch in range(int(epochs)):
         total_loss = 0
         correct = 0
@@ -87,10 +97,9 @@ def train_model(epochs, batch_size, learning_rate, dataset_zip):
         acc_history.append(accuracy)
         training_log += f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%\n"
 
-        # 每个epoch结束后更新进度
-        yield gr.update(value=f"Epoch {epoch+1}/{epochs}: Loss = {avg_loss:.4f}, Accuracy = {accuracy:.2f}%"), None, None, None, None
+        # **返回当前的进度**
+        yield training_log, f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%"
 
-    # 保存模型
     model_path = "trained_model.pth"
     torch.save(model.state_dict(), model_path)
 
@@ -118,7 +127,6 @@ def train_model(epochs, batch_size, learning_rate, dataset_zip):
 
     return training_log, loss_fig, acc_fig, confusion_matrix_path, model_path
 
-
 # **界面**
 with gr.Blocks(theme=gr.themes.Monochrome()) as demo:
     gr.Markdown("# 🔥 Interactive Model Training Platform")
@@ -132,19 +140,23 @@ with gr.Blocks(theme=gr.themes.Monochrome()) as demo:
     epochs = gr.Slider(minimum=1, maximum=100, step=1, value=10, label="Epochs")
     batch_size = gr.Slider(minimum=1, maximum=128, step=1, value=32, label="Batch Size")
     learning_rate = gr.Slider(minimum=0.0001, maximum=0.1, step=0.0001, value=0.001, label="Learning Rate")
+    
+    # **模型选择**
+    model_selector = gr.Dropdown(
+        choices=["ResNet50", "VGG16", "EfficientNetB0"],
+        label="Choose a Model"
+    )
 
     train_btn = gr.Button("Start Training")
     output_text = gr.Textbox(label="Training Status")
+    progress_text = gr.Textbox(label="Progress")
     loss_plot = gr.Plot(label="Loss Curve")
     acc_plot = gr.Plot(label="Accuracy Curve")
     confusion_matrix_img = gr.Image(label="Confusion Matrix")
     model_download = gr.File(label="Download Trained Model")
 
-    # 训练按钮点击后开始训练并显示进度
-    train_btn.click(
-        train_model,
-        inputs=[epochs, batch_size, learning_rate, dataset_upload],
-        outputs=[output_text, loss_plot, acc_plot, confusion_matrix_img, model_download]
-    )
+    train_btn.click(train_model, inputs=[epochs, batch_size, learning_rate, model_selector], outputs=[output_text, progress_text, loss_plot, acc_plot, confusion_matrix_img, model_download])
 
-demo.launch()
+    # **Render 配置端口**
+    PORT = int(os.getenv("PORT", 8080))  # Render 会自动分配端口
+    demo.launch(server_name="0.0.0.0", server_port=PORT)
