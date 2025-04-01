@@ -12,6 +12,9 @@ import zipfile
 import shutil
 import numpy as np
 
+# **黑色背景**
+plt.style.use("dark_background")
+sns.set(style="darkgrid")
 
 # **数据集处理**
 def process_dataset(dataset_zip):
@@ -141,8 +144,7 @@ with gr.Blocks(theme=gr.themes.Monochrome()) as demo:
     train_btn.click(
         train_model,
         inputs=[epochs, batch_size, learning_rate, dataset_upload],
-        outputs=[output_text, loss_plot, acc_plot, confusion_matrix_img, model_download],
-        _queue=False
+        outputs=[output_text, loss_plot, acc_plot, confusion_matrix_img, model_download]
     )
 
 demo.launch()
